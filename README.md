@@ -38,6 +38,19 @@
 
 ---
 
+## v2 Studio Flow
+
+1. **Find**: search iTunes + Deezer (and Spotify if `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` are set) with an optional year filter. Results show album art, year, genre and 30s previews.
+2. **Configure**: pick a voice and a vocal delivery style. Choose a beat: a YouTube instrumental (downloaded with yt-dlp), a Lyria generation, or your own upload. Tick or edit the lyric lines, choose preview or full song, and set vocal/beat levels, reverb and beat offset.
+3. **Confirm**: review everything, then create the cover.
+4. **Studio**: karaoke playback with stem downloads. Covers are saved to **My Covers**: Firestore `users/{uid}/covers` when signed in, otherwise browser storage.
+
+New API endpoints: `GET /api/catalog/search`, `GET /api/catalog/track/{source}/{id}`, `POST /api/songs/prepare`, `GET /api/youtube/instrumentals`, `POST /api/youtube/download`.
+
+> YouTube downloading is for personal/local use. It goes against YouTube's terms and may be blocked from Cloud Run IPs.
+
+Deploy the Firestore rules with `firebase deploy --only firestore:rules`.
+
 ## Project Structure
 
 ```
