@@ -16,6 +16,31 @@ export interface SongInfo {
   instrumental_description?: string;
   has_synced: boolean;
   lines: LyricLine[];
+  artwork?: string;
+  year?: number | null;
+  preview_url?: string | null;
+}
+
+export interface CatalogTrack {
+  id: string;
+  source: 'itunes' | 'deezer' | 'spotify';
+  title: string;
+  artist: string;
+  album: string;
+  year: number | null;
+  genre: string;
+  duration: number;
+  artwork: string;
+  preview_url: string | null;
+  explicit: boolean;
+}
+
+export interface YouTubeCandidate {
+  video_id: string;
+  title: string;
+  channel: string;
+  duration: number;
+  thumbnail: string;
 }
 
 export interface Voice {
@@ -32,6 +57,19 @@ export interface BeatTrack {
   path: string;
   model: string;
   prompt?: string;
+  label?: string;
+}
+
+export type ReverbType = 'dry' | 'room' | 'plate';
+
+export interface CoverConfig {
+  lineSelection: boolean[];
+  lineEdits: string[];
+  length: 'preview' | 'full';
+  vocalGain: number;
+  beatGain: number;
+  reverb: ReverbType;
+  beatOffset: number;
 }
 
 export interface CoverResult {
@@ -43,4 +81,11 @@ export interface CoverResult {
   vocal_url: string;
   beat_url: string;
   duration: number;
+  artwork?: string;
+  created_at?: number;
+}
+
+export interface SavedCover extends CoverResult {
+  voice_name: string;
+  lines: LyricLine[];
 }
