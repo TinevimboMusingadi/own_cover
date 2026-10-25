@@ -5,11 +5,13 @@ import { CoverResult, SongInfo } from '../types';
 interface KaraokePlayerProps {
   cover: CoverResult;
   song: SongInfo | null;
+  voiceName?: string;
 }
 
 export const KaraokePlayer: React.FC<KaraokePlayerProps> = ({
   cover,
-  song
+  song,
+  voiceName
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -154,7 +156,7 @@ export const KaraokePlayer: React.FC<KaraokePlayerProps> = ({
             {cover.title} <span className="text-studio-yellow">(AI Cover)</span>
           </h2>
           <p className="text-xs text-studio-muted mt-0.5">
-            Original: {cover.artist || song?.artist} · Vocalist: {song?.artist || "Gemini Voice"}
+            Original: {cover.artist || song?.artist} · Vocalist: {voiceName || "Gemini Voice"}
           </p>
         </div>
 

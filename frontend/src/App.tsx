@@ -1,208 +1,219 @@
 import React, { useState, useEffect } from 'react';
 import { User, onAuthStateChanged } from 'firebase/auth';
-import { Disc, Sparkles, Mic, Music2, SlidersHorizontal, ShieldAlert, Radio, Globe } from 'lucide-react';
+import { Globe, RotateCcw, Library } from 'lucide-react';
 
-import { auth, loginWithGoogle, logoutUser } from './firebase';
-import { SongInfo, Voice, BeatTrack, CoverResult } from './types';
-import { Navbar } from './components/Navbar';
-import { SongSearch } from './components/SongSearch';
-import { BeatGenerator } from './components/BeatGenerator';
-import { CoverStudio } from './components/CoverStudio';
+import { auth, loginWithGoogle, logoutUser, saveCover } from './firebase';
+import { SongInfo, Voice, BeatTrack, CoverResult, CoverConfig, SavedCover } from './types';
+import { linesToSing } from './api';
+import { Navbar, AppView } from './components/Navbar';
+import { Stepper } from './components/Stepper';
+import { CatalogSearch } from './components/CatalogSearch';
+import { CoverConfigurator } from './components/CoverConfigurator';
+import { ConfirmCover } from './components/ConfirmCover';
 import { KaraokePlayer } from './components/KaraokePlayer';
+import { MyCovers } from './components/MyCovers';
 import { VoiceStudioModal } from './components/VoiceStudioModal';
+
+const defaultConfig = (song: SongInfo): CoverConfig => ({
+  lineSelection: song.lines.map(() => true),
+  lineEdits: song.lines.map((l) => l.text),
+  length: 'preview',
+  vocalGain: 1.15,
+  beatGain: 0.9,
+  reverb: 'plate',
+  beatOffset: 0,
+});
 
 export const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
+  const [view, setView] = useState<AppView>('studio');
   const [voices, setVoices] = useState<Voice[]>([]);
   const [activeVoice, setActiveVoice] = useState<Voice | null>(null);
-  const [selectedSong, setSelectedSong] = useState<SongInfo | null>(null);
-  const [activeBeat, setActiveBeat] = useState<BeatTrack | null>(null);
-  const [coverResult, setCoverResult] = useState<CoverResult | null>(null);
   const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
 
-  // Monitor Firebase Auth
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-    return () => unsubscribe();
-  }, []);
+  // Wizard state
+  const [step, setStep] = useState(0);
+  const [maxStep, setMaxStep] = useState(0);
+  const [song, setSong] = useState<SongInfo | null>(null);
+  const [config, setConfig] = useState<CoverConfig | null>(null);
+  const [beat, setBeat] = useState<BeatTrack | null>(null);
+  const [cover, setCover] = useState<CoverResult | null>(null);
+  const [coverSong, setCoverSong] = useState<SongInfo | null>(null);
 
-  // Fetch available voices on load
+  useEffect(() => onAuthStateChanged(auth, (u) => setUser(u)), []);
+
   useEffect(() => {
-    const fetchVoices = async () => {
-      try {
-        const resp = await fetch('/api/voices');
-        const data = await resp.json();
-        if (data.voices && data.voices.length > 0) {
+    fetch('/api/voices')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.voices?.length) {
           setVoices(data.voices);
-          // Set default voice (Tinevimbo Musingadi) or first replicated
-          const defaultV = data.voices.find((v: Voice) => v.is_default) || data.voices[0];
-          setActiveVoice(defaultV);
+          setActiveVoice(data.voices.find((v: Voice) => v.is_default) || data.voices[0]);
         }
-      } catch (err) {
-        console.warn("Could not fetch voices list:", err);
-      }
-    };
-    fetchVoices();
+      })
+      .catch((err) => console.warn('Could not fetch voices list:', err));
   }, []);
 
-  const handleLogin = async () => {
-    const u = await loginWithGoogle();
-    if (u) setUser(u);
+  const goTo = (i: number) => {
+    setStep(i);
+    setMaxStep((m) => Math.max(m, i));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleLogout = async () => {
-    await logoutUser();
-    setUser(null);
+  const handleSongPrepared = (s: SongInfo) => {
+    setSong(s);
+    setConfig(defaultConfig(s));
+    setBeat(null);
+    setCover(null);
+    setMaxStep(1);
+    goTo(1);
+  };
+
+  const handleCoverComplete = (result: CoverResult) => {
+    if (!song || !config) return;
+    const sung = linesToSing(song, config);
+    // Karaoke shows exactly what was sung, including lyric edits
+    setCoverSong({ ...song, lines: sung });
+    setCover(result);
+    goTo(3);
+    saveCover({ ...result, voice_name: activeVoice?.name || result.voice_id, lines: sung }).catch((e) =>
+      console.warn('Could not save cover:', e)
+    );
+  };
+
+  const playSaved = (saved: SavedCover) => {
+    setCover(saved);
+    setCoverSong({
+      title: saved.title, artist: saved.artist, duration: saved.duration, bpm: 0, key: '', genre: '', mood: '',
+      has_synced: true, lines: saved.lines || [], artwork: saved.artwork,
+    });
+    setView('studio');
+    setMaxStep((m) => Math.max(m, 3));
+    goTo(3);
+  };
+
+  const startOver = () => {
+    setSong(null);
+    setConfig(null);
+    setBeat(null);
+    setCover(null);
+    setMaxStep(0);
+    setView('studio');
+    goTo(0);
   };
 
   return (
-    <div className="relative min-h-screen bg-studio-dark text-studio-beige overflow-hidden">
-      
-      {/* Groovy Grain Noise Overlay */}
+    <div className="relative min-h-screen bg-studio-dark text-studio-beige overflow-x-hidden">
       <div className="grain-overlay" />
-
-      {/* Decorative Gradient Flares */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-studio-yellow/10 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute top-1/3 right-10 w-[30rem] h-[30rem] bg-amber-500/10 rounded-full blur-[160px] pointer-events-none" />
 
-      {/* Navigation Bar */}
       <Navbar
         user={user}
-        onLogin={handleLogin}
-        onLogout={handleLogout}
+        onLogin={async () => {
+          const u = await loginWithGoogle();
+          if (u) setUser(u);
+        }}
+        onLogout={async () => {
+          await logoutUser();
+          setUser(null);
+        }}
         activeVoice={activeVoice}
         onOpenVoiceStudio={() => setIsVoiceStudioOpen(true)}
+        view={view}
+        onViewChange={setView}
       />
 
-      {/* Hero Studio Banner */}
-      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-8 text-center sm:text-left">
-        <div className="flex flex-col lg:flex-row items-center justify-between gap-8 pb-8 border-b border-studio-border/60">
-          
-          <div className="max-w-2xl">
-            <div className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-full bg-studio-card border border-studio-border text-xs font-mono text-studio-yellow mb-4 shadow-sm">
-              <Radio className="w-3.5 h-3.5 text-studio-yellow animate-pulse" />
-              <span>LIVE ON GCP · serious-unison-452122-i2</span>
+      <main className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
+        {view === 'library' ? (
+          <div className="pt-8">
+            <MyCovers userKey={user?.uid || 'local'} onPlay={playSaved} onNewCover={startOver} />
+          </div>
+        ) : (
+          <>
+            <Stepper current={step} maxReached={maxStep} onStep={goTo} />
+            <div className="pt-8">
+              {step === 0 && (
+                <>
+                  {!song && (
+                    <div className="mb-8 max-w-3xl">
+                      <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white font-['Syne'] tracking-tight leading-[1.05]">
+                        Any song.{' '}
+                        <span className="text-transparent bg-clip-text bg-yellow-gradient">Your voice.</span>
+                      </h1>
+                      <p className="mt-3 text-sm sm:text-base text-studio-muted">
+                        Find a track, grab the instrumental, and let your Gemini-cloned voice sing the cover.
+                      </p>
+                    </div>
+                  )}
+                  <CatalogSearch onSongPrepared={handleSongPrepared} />
+                </>
+              )}
+
+              {step === 1 && song && config && (
+                <CoverConfigurator
+                  song={song}
+                  voices={voices}
+                  activeVoice={activeVoice}
+                  onSelectVoice={setActiveVoice}
+                  onOpenVoiceStudio={() => setIsVoiceStudioOpen(true)}
+                  beat={beat}
+                  onBeatReady={setBeat}
+                  config={config}
+                  onConfigChange={setConfig}
+                  onBack={() => goTo(0)}
+                  onNext={() => goTo(2)}
+                />
+              )}
+
+              {step === 2 && song && config && beat && activeVoice && (
+                <ConfirmCover song={song} voice={activeVoice} beat={beat} config={config} onEdit={() => goTo(1)} onComplete={handleCoverComplete} />
+              )}
+
+              {step === 3 && cover && (
+                <div className="space-y-6">
+                  <KaraokePlayer cover={cover} song={coverSong} voiceName={'voice_name' in cover ? (cover as SavedCover).voice_name : activeVoice?.name} />
+                  <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                    <button onClick={() => goTo(1)} disabled={!song} className="px-5 py-3 rounded-xl border border-studio-border text-studio-beige text-xs font-semibold flex items-center justify-center gap-2 hover:border-studio-yellow/50 disabled:opacity-40">
+                      <RotateCcw className="w-4 h-4" /> Tweak & re-record
+                    </button>
+                    <button onClick={() => setView('library')} className="px-5 py-3 rounded-xl border border-studio-border text-studio-beige text-xs font-semibold flex items-center justify-center gap-2 hover:border-studio-yellow/50">
+                      <Library className="w-4 h-4" /> My Covers
+                    </button>
+                    <button onClick={startOver} className="px-5 py-3 rounded-xl bg-yellow-gradient text-studio-dark text-xs font-bold uppercase tracking-wider yellow-glow">
+                      Cover another song
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white font-['Syne'] tracking-tight leading-[1.08]">
-              Turn Any Song Into <br />
-              <span className="text-transparent bg-clip-text bg-yellow-gradient underline decoration-studio-yellow/30">
-                Your Own AI Cover.
-              </span>
-            </h1>
-
-            <p className="mt-4 text-sm sm:text-base text-studio-muted leading-relaxed">
-              Lookup any song by title or year. We pull millisecond-timed lyrics, produce an instrumental backing track with Google Lyria 3.5, and clone your voice using Gemini Replicated Voice for a studio-quality cover.
-            </p>
-          </div>
-
-          {/* Retro Vinyl Badge Card */}
-          <div className="relative group cursor-pointer" onClick={() => setIsVoiceStudioOpen(true)}>
-            <div className="p-6 rounded-3xl bg-studio-card border border-studio-border/80 shadow-2xl flex items-center space-x-5 studio-glass-hover">
-              <div className="w-20 h-20 rounded-full bg-studio-vinyl border-4 border-studio-yellow/60 flex items-center justify-center yellow-glow shrink-0 animate-spin-slow">
-                <div className="w-7 h-7 rounded-full bg-studio-yellow flex items-center justify-center text-studio-dark font-extrabold text-xs">
-                  AI
-                </div>
-              </div>
-              <div className="text-left">
-                <div className="text-[11px] font-mono text-studio-yellow uppercase tracking-wider">
-                  Active Vocalist
-                </div>
-                <div className="text-base font-bold text-white truncate max-w-[180px]">
-                  {activeVoice ? activeVoice.name : "Tinevimbo Musingadi"}
-                </div>
-                <div className="text-xs text-studio-muted mt-0.5">
-                  Gemini Replicated Voice (24kHz)
-                </div>
-                <div className="mt-2 text-[11px] text-studio-yellow flex items-center space-x-1 font-semibold">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Configure Voice Studio</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </section>
-
-      {/* Main Studio Pipeline */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        
-        {/* Step 1: Song Search & Lyrics */}
-        <SongSearch
-          onSongSelected={(song) => setSelectedSong(song)}
-          selectedSong={selectedSong}
-        />
-
-        {/* Step 2: Beat & Instrumental Lab */}
-        <BeatGenerator
-          selectedSong={selectedSong}
-          onBeatReady={(beat) => setActiveBeat(beat)}
-          activeBeat={activeBeat}
-        />
-
-        {/* Step 3: Cover Production Deck */}
-        <CoverStudio
-          selectedSong={selectedSong}
-          activeVoice={activeVoice}
-          activeBeat={activeBeat}
-          onCoverComplete={(cover) => setCoverResult(cover)}
-          onOpenVoiceStudio={() => setIsVoiceStudioOpen(true)}
-        />
-
-        {/* Playback & Karaoke Deck (when cover is ready) */}
-        {coverResult && (
-          <div id="karaoke-section" className="pt-4">
-            <KaraokePlayer
-              cover={coverResult}
-              song={selectedSong}
-            />
-          </div>
+          </>
         )}
-
       </main>
 
-      {/* 2-Step Voice Studio Modal */}
       <VoiceStudioModal
         isOpen={isVoiceStudioOpen}
         onClose={() => setIsVoiceStudioOpen(false)}
         voices={voices}
         activeVoice={activeVoice}
-        onSelectVoice={(v) => setActiveVoice(v)}
+        onSelectVoice={setActiveVoice}
         onVoiceCreated={(v) => {
           setVoices((prev) => [v, ...prev]);
           setActiveVoice(v);
         }}
       />
 
-      {/* Studio Footer */}
-      <footer className="border-t border-studio-border/60 bg-studio-vinyl/60 mt-16 py-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6 text-xs text-studio-muted">
-          <div className="flex items-center space-x-3">
+      <footer className="border-t border-studio-border/60 bg-studio-vinyl/60 py-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-studio-muted">
+          <div className="flex items-center gap-3">
             <span className="font-extrabold text-white font-['Syne']">OWN COVER</span>
-            <span>·</span>
-            <span>Google Gemini 3.8 Flash TTS & Lyria 3.5 AI Studio</span>
+            <span>Gemini voice · Lyria · LRCLIB · iTunes · Deezer</span>
           </div>
-
-          <div className="flex items-center space-x-6">
-            <a
-              href="https://github.com/TinevimboMusingadi/own_cover.git"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center space-x-1.5 hover:text-studio-yellow transition-colors"
-            >
-              <Globe className="w-4 h-4" />
-              <span>GitHub Repository</span>
-            </a>
-            <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-studio-card border border-studio-border text-studio-yellow">
-              v1.0.0-prod
-            </span>
-          </div>
+          <a href="https://github.com/TinevimboMusingadi/own_cover" target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:text-studio-yellow">
+            <Globe className="w-4 h-4" /> GitHub
+          </a>
         </div>
       </footer>
-
     </div>
   );
 };
