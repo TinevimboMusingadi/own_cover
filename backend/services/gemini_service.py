@@ -106,7 +106,10 @@ def resample_pcm(audio: np.ndarray, orig_rate: int, target_rate: int = RATE) -> 
     return np.interp(indices, np.arange(len(audio)), audio).astype(np.int16)
 
 def synthesize_line(text: str, voice_id: str = DEFAULT_VOICE_ID) -> np.ndarray:
-    """Synthesize a single vocal line using the selected voice."""
+    """Synthesize a single vocal line using the selected voice.
+
+    Only the lyric text is sent: replicated voices read any extra direction (prefixes, [tags]) aloud.
+    """
     client = get_client()
     clean_text = text.strip()
     if not clean_text:
