@@ -47,6 +47,26 @@ def _resolve_gemini_key() -> str:
 
 GEMINI_API_KEY = _resolve_gemini_key()
 
+def _resolve_optional_key(name: str) -> str:
+    """Optional keys: environment first, then D:\\my-custom_skills\\.keys_env."""
+    key = os.getenv(name, "").strip()
+    if key:
+        return key
+    custom_skills_env = Path(r"D:\my-custom_skills\.keys_env")
+    if custom_skills_env.exists():
+        try:
+            for line in custom_skills_env.read_text(encoding="utf-8", errors="ignore").splitlines():
+                m = re.match(rf"^\s*{name}\s*=\s*['\"]?([^'\"\r\n]+)", line, flags=re.I)
+                if m:
+                    return m.group(1).strip()
+        except Exception:
+            pass
+    return ""
+
+# Optional Spotify catalog (iTunes + Deezer need no keys)
+SPOTIFY_CLIENT_ID = _resolve_optional_key("SPOTIFY_CLIENT_ID")
+SPOTIFY_CLIENT_SECRET = _resolve_optional_key("SPOTIFY_CLIENT_SECRET")
+
 # Model Definitions
 TEXT_MODEL = os.getenv("OWNCOVER_TEXT_MODEL", "gemini-3.8-flash")
 TTS_MODEL = os.getenv("OWNCOVER_TTS_MODEL", "gemini-3.8-flash-tts")
