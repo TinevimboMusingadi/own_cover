@@ -112,64 +112,101 @@ Respond ONLY with a JSON object matching this schema:
             "instrumental_description": "warm rhythm acoustic guitar, tight drums, melodic bassline, subtle keyboard pads"
         }
 
-def search_song_and_lyrics(query: str) -> dict[str, Any]:
-    """Search LRCLIB for lyrics and metadata, with Gemini musical intelligence."""
-    encoded = urllib.parse.quote_plus(query.strip())
-    url = f"https://lrclib.net/api/search?q={encoded}"
-    
-    results = []
+LRCLIB_HEADERS = {"User-Agent": "OwnCover/2.0 (https://github.com/TinevimboMusingadi/own_cover)"}
+
+def _lrclib_get(path: str, params: dict[str, Any]) -> Any:
+    url = f"https://lrclib.net/api/{path}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers=LRCLIB_HEADERS)
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def _lines_from_record(record: dict[str, Any], bpm: int = 100) -> tuple[list[dict[str, Any]], bool]:
+    duration = float(record.get("duration") or 180.0)
+    if record.get("syncedLyrics"):
+        return parse_synced_lyrics(record["syncedLyrics"], duration), True
+    if record.get("plainLyrics"):
+        return synthesize_plain_lyrics_timing(record["plainLyrics"], bpm), False
+    return [], False
+
+def fetch_lyrics_record(title: str, artist: str = "", duration: float | None = None) -> dict[str, Any] | None:
+    """Find the best LRCLIB record: exact signature match first, then closest-duration search hit."""
+    if artist and duration:
+        try:
+            record = _lrclib_get("get", {
+                "track_name": title, "artist_name": artist, "duration": round(duration),
+            })
+            if isinstance(record, dict) and (record.get("syncedLyrics") or record.get("plainLyrics")):
+                return record
+        except Exception as e:
+            print(f"LRCLIB exact lookup missed: {e}")
+
+    params = {"track_name": title, "artist_name": artist} if artist else {"q": title}
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "OwnCover/1.0 (contact@owncover.ai)"})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(data, list):
-                results = data
+        results = _lrclib_get("search", params)
     except Exception as e:
         print(f"LRCLIB lookup failed: {e}")
+        return None
+    if not isinstance(results, list) or not results:
+        return None
 
-    if results:
-        # Choose the best match (prefer synced lyrics)
-        best = None
-        for item in results:
-            if item.get("syncedLyrics"):
-                best = item
-                break
-        if not best:
-            best = results[0]
+    def score(item: dict[str, Any]) -> tuple[int, float]:
+        # Prefer synced lyrics, then the closest duration to the catalog track
+        dur_gap = abs(float(item.get("duration") or 0) - duration) if duration else 0.0
+        return (0 if item.get("syncedLyrics") else 1, dur_gap)
 
-        title = best.get("trackName") or best.get("name") or query
-        artist = best.get("artistName") or ""
-        duration = float(best.get("duration") or 180.0)
-        
-        # Parse lines
-        if best.get("syncedLyrics"):
-            lines = parse_synced_lyrics(best["syncedLyrics"], duration)
-            has_synced = True
-        elif best.get("plainLyrics"):
-            lines = synthesize_plain_lyrics_timing(best["plainLyrics"])
-            has_synced = False
-        else:
-            lines = []
-            has_synced = False
+    return min(results, key=score)
 
-        # Enrich with musical info from Gemini
-        meta = enrich_song_metadata_with_gemini(title, artist)
+def prepare_song(
+    title: str,
+    artist: str = "",
+    duration: float | None = None,
+    album: str = "",
+    known_bpm: int | None = None,
+) -> dict[str, Any]:
+    """Build a SongInfo for a catalog track the user picked: lyrics + musical metadata."""
+    meta = enrich_song_metadata_with_gemini(title, artist)
+    bpm = int(known_bpm or meta.get("bpm") or 110)
 
-        return {
-            "title": title,
-            "artist": artist,
-            "album": best.get("albumName", ""),
-            "duration": duration,
-            "has_synced": has_synced,
-            "bpm": meta.get("bpm", 110),
-            "key": meta.get("key", "C Major"),
-            "genre": meta.get("genre", "Pop"),
-            "mood": meta.get("mood", "steady"),
-            "instrumental_description": meta.get("instrumental_description", ""),
-            "lines": lines
-        }
+    record = fetch_lyrics_record(title, artist, duration)
+    if record:
+        lines, has_synced = _lines_from_record(record, bpm)
+        if lines:
+            return {
+                "title": title,
+                "artist": artist,
+                "album": album or record.get("albumName", ""),
+                "duration": float(duration or record.get("duration") or 180.0),
+                "has_synced": has_synced,
+                "bpm": bpm,
+                "key": meta.get("key", "C Major"),
+                "genre": meta.get("genre", "Pop"),
+                "mood": meta.get("mood", "steady"),
+                "instrumental_description": meta.get("instrumental_description", ""),
+                "lines": lines,
+            }
 
-    # Fallback to Gemini if no LRCLIB match found
+    song = generate_lyrics_with_gemini(f"{title} {artist}".strip())
+    song.update({"title": title, "artist": artist or song.get("artist", ""), "bpm": bpm, "has_synced": False})
+    if album:
+        song["album"] = album
+    if duration:
+        song["duration"] = float(duration)
+    return song
+
+def search_song_and_lyrics(query: str) -> dict[str, Any]:
+    """Legacy free-text lookup: auto-picks the best LRCLIB match for a query."""
+    record = fetch_lyrics_record(query)
+    if record:
+        return prepare_song(
+            title=record.get("trackName") or record.get("name") or query,
+            artist=record.get("artistName") or "",
+            duration=float(record.get("duration") or 180.0),
+            album=record.get("albumName", ""),
+        )
+    return generate_lyrics_with_gemini(query)
+
+def generate_lyrics_with_gemini(query: str) -> dict[str, Any]:
+    """Fallback when LRCLIB has no lyrics: ask Gemini for lyrics with estimated timing."""
     client = get_client()
     prompt = f"""Search your musical knowledge for song: "{query}".
 Return JSON with the complete lyrics with estimated start and end timestamps (in seconds), musical key, BPM, and genre:
